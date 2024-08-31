@@ -154,45 +154,83 @@ jobs:
       security-events: write 
       actions: read
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build and push backend Docker image
-      working-directory: ./quiz-app
-      run: |
-        docker build . -t ${{ secrets.DOCKER_USERNAME }}/frontend-js
-        echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin 
-        docker push ${{ secrets.DOCKER_USERNAME }}/frontend-js    
+      - uses: actions/checkout@v4
+      
+      - name: Build and push frontend Docker image
+        working-directory: ./quiz-app
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/frontend-js .
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+          docker push ${{ secrets.DOCKER_USERNAME }}/frontend-js    
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'docker.io/${{ secrets.DOCKER_USERNAME }}/frontend-js'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH'
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.0.18
+        with:
+          image-ref: 'docker.io/${{ secrets.DOCKER_USERNAME }}/frontend-js'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
 
-    - name: Install Snyk CLI
-      uses: snyk/actions/setup@master
-      with:
-        snyk-token: ${{ secrets.SNYK_TOKEN }}
-       
-    - name: Snyk Authenticate    
-      run: snyk auth ${{ secrets.SNYK_TOKEN }}
-  
-    - name: Snyk Container monitor
-      run: snyk container monitor ${{ secrets.DOCKER_USERNAME }}/frontend-js --file=Dockerfile   
-      working-directory: ./quiz-app
+      - name: Snyk Container monitor
+        run: snyk container monitor ${{ secrets.DOCKER_USERNAME }}/frontend-js --file=Dockerfile
+        working-directory: ./quiz-app
 
-    - name: Run Snyk to check for vulnerabilities in the Docker image
-      uses: snyk/actions/docker@master
-      with:
-        image: ${{ secrets.DOCKER_USERNAME }}/frontend-js
-        args: --file=quiz-app/Dockerfile --severity-threshold=high
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      continue-on-error: true
+  backend-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x]
+        architecture: [x64]
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
 
+      - run: |
+          npm install
+          npm run lint
+          npm install --save-dev --save-exact prettier
+          npm run prettier
+          npm test
+        working-directory: ./backend
+        env:
+          CI: true 
+
+      - run: npm run build
+        working-directory: ./backend
+
+      - uses: warchant/setup-sonar-scanner@v8
+
+      - uses: sonarsource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: backend
+          args: >
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.host.url=${{ secrets.SONAR_URL }}
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.sources=.
+            -Dsonar.verbose=true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  backend-security:
+    needs: backend-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: snyk/actions/setup@v1
+        with:
+          version: '1.217.0'
+
+      - run: snyk code test --all-projects
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
 
   backend-image:
     needs: backend-security
@@ -202,54 +240,37 @@ jobs:
       security-events: write 
       actions: read
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build and push backend Docker image
-      working-directory: ./backend
-      run: |
-        docker build . -t ${{ secrets.DOCKER_USERNAME }}/backend-api
-        echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin 
-        docker push ${{ secrets.DOCKER_USERNAME }}/backend-api    
+      - uses: actions/checkout@v4
+      
+      - name: Build and push backend Docker image
+        working-directory: ./quiz-app
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/backend-api .
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+          docker push ${{ secrets.DOCKER_USERNAME }}/backend-api    
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'docker.io/${{ secrets.DOCKER_USERNAME }}/backend-api'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH' 
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.0.18
+        with:
+          image-ref: 'docker.io/${{ secrets.DOCKER_USERNAME }}/backend-api'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
         
-    - name: Install Snyk CLI
-      uses: snyk/actions/setup@master
-      with:
-        snyk-token: ${{ secrets.SNYK_TOKEN }}
-     
-    - name: Snyk Authenticate    
-      run: snyk auth ${{ secrets.SNYK_TOKEN }}
-
-    - name: Snyk Container monitor
-      run: snyk container monitor ${{ secrets.DOCKER_USERNAME }}/backend-api --file=Dockerfile   
-      working-directory: ./backend
-
-    - name: Run Snyk to check for vulnerabilities in the Docker image
-      uses: snyk/actions/docker@master
-      with:
-        image: ${{ secrets.DOCKER_USERNAME }}/backend-api
-        args: --file=backend/Dockerfile --severity-threshold=high
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      continue-on-error: true 
-
+      - name: Snyk Container monitor
+        run: snyk container monitor ${{ secrets.DOCKER_USERNAME }}/backend-api --file=Dockerfile
+        working-directory: ./backend
 
   k8s-manifest-scan:
     needs: [backend-security, frontend-security]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Run Snyk to check Kubernetes manifest file for issues
-        uses: snyk/actions/iac@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        uses: snyk/actions/iac@v1
         with:
           file: kubernetes-manifest/
           args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
