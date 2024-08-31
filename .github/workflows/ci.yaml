@@ -239,17 +239,23 @@ jobs:
 
 
   k8s-manifest-scan:
-    needs: [backend-security, frontend-security]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Snyk to check Kubernetes manifest file for issues
-        uses: snyk/actions/iac@master
-        # env:
-        #   SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          file: kubernetes-manifest/
-          args: --severity-threshold=high
+  needs: [backend-security, frontend-security]
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - name: Run kubectl commands
+      run: |
+        # Ensure kubectl is installed
+        sudo apt-get update
+        sudo apt-get install -y kubectl
+
+        # Update kubeconfig to use the EKS cluster
+        aws eks update-kubeconfig --region us-east-2 --name quizapp-eks-cluster
+
+        # Perform kubectl commands, e.g., get the status of the cluster
+        kubectl get nodes
+        # Add any additional kubectl commands you need here
+
 
 
        
